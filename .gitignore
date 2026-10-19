@@ -1,5 +1,18 @@
+# Environment and secrets
 .venv/
+.env
+
+# Python
 __pycache__/
 *.pyc
-.env
+*.egg-info/
+
+# Test and coverage output
 .pytest_cache/
+.coverage
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
