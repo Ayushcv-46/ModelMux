@@ -13,3 +13,12 @@ class ChatRequest(BaseModel):
     model: str | None = None
     max_tokens: int = Field(default=256, ge=1, le=4096)
     temperature: float = Field(default=1.0, ge=0, le=2)
+
+
+class ChatResponse(BaseModel):
+    text: str
+    provider: str
+    model: str
+    tokens_in: int = Field(ge=0)
+    tokens_out: int = Field(ge=0)
+    latency_ms: float = Field(ge=0)
