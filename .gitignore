@@ -7,6 +7,10 @@ __pycache__/
 *.pyc
 *.egg-info/
 
+# Databases
+*.db
+*.sqlite3
+
 # Test and coverage output
 .pytest_cache/
 .coverage

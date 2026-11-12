@@ -1,12 +1,23 @@
+from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.db import init_db
 from app.errors import ProviderError
 from app.providers.base import BaseProvider
 from app.providers.mock import MockProvider
 from app.schemas import ChatRequest, ChatResponse
 
-app = FastAPI(title="ModelMux")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: create tables
+    init_db()
+    yield
+    # Shutdown logic (if any)
+
+
+app = FastAPI(title="ModelMux", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +31,6 @@ def get_provider() -> BaseProvider:
 
 # ---------------------------------------------------------------------------
 # Exception handler: turns any ProviderError into a structured JSON response.
-# (Already existed — untouched.)
 # ---------------------------------------------------------------------------
 @app.exception_handler(ProviderError)
 async def provider_error_handler(request: Request, exc: ProviderError):
@@ -52,8 +62,5 @@ async def chat(
     """
     Accept a ChatRequest, forward it to the active provider,
     and return a ChatResponse.
-
-    Any ProviderError raised inside provider.complete() is caught
-    automatically by the exception handler above.
     """
     return await provider.complete(request)
