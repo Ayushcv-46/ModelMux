@@ -8,6 +8,7 @@ from app.db import RequestLog, get_db, init_db
 from app.errors import ProviderError
 from app.providers.base import BaseProvider
 from app.providers.mock import MockProvider
+from app.providers.ollama import OllamaProvider
 from app.schemas import ChatRequest, ChatResponse
 
 
@@ -28,7 +29,7 @@ app = FastAPI(title="ModelMux", lifespan=lifespan)
 # ---------------------------------------------------------------------------
 def get_provider() -> BaseProvider:
     """Return the default provider for every request."""
-    return MockProvider()
+    return OllamaProvider(default_model="qwen3:4b")
 
 
 # ---------------------------------------------------------------------------
