@@ -6,6 +6,7 @@ try:
 
     class Settings(BaseSettings):
         gemini_api_key: str = ""
+        groq_api_key: str = ""
         ollama_base_url: str = "http://localhost:11434"
 
         model_config = SettingsConfigDict(
@@ -29,6 +30,7 @@ except ImportError:
                         os.environ.setdefault(key.strip(), val.strip())
 
             self.gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
+            self.groq_api_key: str = os.getenv("GROQ_API_KEY", "")
             self.ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
     settings = Settings()
