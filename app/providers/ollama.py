@@ -16,7 +16,7 @@ class OllamaProvider(BaseProvider):
     def __init__(
         self,
         base_url: str | None = None,
-        default_model: str = "qwen3:4b",
+        default_model: str = "qwen2.5:3b",
         timeout: float = 60.0,
         client: httpx.AsyncClient | None = None,
     ):
@@ -40,7 +40,6 @@ class OllamaProvider(BaseProvider):
                 {"role": msg.role, "content": msg.content} for msg in request.messages
             ],
             "stream": False,
-            "think": False,
             "options": {
                 "temperature": request.temperature,
                 "num_predict": request.max_tokens,
@@ -94,7 +93,7 @@ class OllamaProvider(BaseProvider):
 
         # Extract message text and token statistics
         message = data.get("message", {})
-        text = message.get("content", "") or message.get("thinking", "")
+        text = message.get("content", "")
         tokens_in = data.get("prompt_eval_count", 0) or 0
         tokens_out = data.get("eval_count", 0) or 0
         model_used = data.get("model", request.model or self.default_model)

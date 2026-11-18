@@ -29,7 +29,7 @@ app = FastAPI(title="ModelMux", lifespan=lifespan)
 # ---------------------------------------------------------------------------
 def get_provider() -> BaseProvider:
     """Return the default provider for every request."""
-    return OllamaProvider(default_model="qwen3:4b")
+    return OllamaProvider(default_model="qwen2.5:3b")
 
 
 # ---------------------------------------------------------------------------
