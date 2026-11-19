@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 import httpx
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.db import RequestLog, get_db, init_db
 from app.errors import ProviderError
 from app.providers.base import BaseProvider
@@ -12,6 +13,8 @@ from app.providers.gemini import GeminiProvider
 from app.providers.groq import GroqProvider
 from app.providers.mock import MockProvider
 from app.providers.ollama import OllamaProvider
+from app.routing.router import Router
+from app.routing.strategy import PriorityStrategy
 from app.schemas import ChatRequest, ChatResponse
 
 
@@ -50,14 +53,30 @@ def get_http_client(request: Request) -> httpx.AsyncClient | None:
 
 
 # ---------------------------------------------------------------------------
-# Dependency: returns the active provider with the shared HTTP client.
+# Dependency: creates the router configured with the active strategy
+# ---------------------------------------------------------------------------
+def get_router(
+    client: httpx.AsyncClient | None = Depends(get_http_client),
+) -> Router:
+    """Instantiate providers and return Router configured with PriorityStrategy."""
+    providers: dict[str, BaseProvider] = {
+        "groq": GroqProvider(client=client),
+        "gemini": GeminiProvider(client=client),
+        "ollama": OllamaProvider(client=client),
+    }
+    strategy = PriorityStrategy(priority=settings.priority_list)
+    return Router(providers=providers, strategy=strategy)
+
+
+# ---------------------------------------------------------------------------
+# Dependency: returns the primary active provider from the Router.
 # Tests can swap this via app.dependency_overrides[get_provider] = ...
 # ---------------------------------------------------------------------------
 def get_provider(
-    client: httpx.AsyncClient | None = Depends(get_http_client),
+    router: Router = Depends(get_router),
 ) -> BaseProvider:
-    """Return the default provider injected with the shared HTTP client."""
-    return GroqProvider(client=client)
+    """Return the top-priority provider determined by the router."""
+    return router.get_primary_provider()
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +111,7 @@ async def chat(
     db: Session = Depends(get_db),
 ) -> ChatResponse:
     """
-    Accept a ChatRequest, forward it to the active provider,
+    Accept a ChatRequest, forward it to the active provider selected by the router,
     log the outcome (success or failure) to the database,
     and return the ChatResponse.
     """

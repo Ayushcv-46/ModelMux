@@ -8,6 +8,7 @@ try:
         gemini_api_key: str = ""
         groq_api_key: str = ""
         ollama_base_url: str = "http://localhost:11434"
+        routing_priority: str = "groq,gemini,ollama"
 
         model_config = SettingsConfigDict(
             env_file=".env",
@@ -15,10 +16,14 @@ try:
             extra="ignore",
         )
 
+        @property
+        def priority_list(self) -> list[str]:
+            """Parse comma-separated routing_priority into a clean list of provider names."""
+            return [p.strip().lower() for p in self.routing_priority.split(",") if p.strip()]
+
     settings = Settings()
 
 except ImportError:
-    # Graceful fallback until `pip install pydantic-settings` is run
     class Settings:  # type: ignore
         def __init__(self):
             env_file = Path(".env")
@@ -32,5 +37,10 @@ except ImportError:
             self.gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
             self.groq_api_key: str = os.getenv("GROQ_API_KEY", "")
             self.ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+            self.routing_priority: str = os.getenv("ROUTING_PRIORITY", "groq,gemini,ollama")
+
+        @property
+        def priority_list(self) -> list[str]:
+            return [p.strip().lower() for p in self.routing_priority.split(",") if p.strip()]
 
     settings = Settings()
