@@ -2,6 +2,7 @@ import time
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
+import httpx
 from sqlalchemy.orm import Session
 
 from app.db import RequestLog, get_db, init_db
@@ -18,20 +19,45 @@ from app.schemas import ChatRequest, ChatResponse
 async def lifespan(app: FastAPI):
     # Startup: ensure tables exist in the database
     init_db()
+
+    # Configure connection pool limits and timeouts for upstream providers
+    limits = httpx.Limits(
+        max_keepalive_connections=20,  # keep up to 20 idle warm sockets
+        max_connections=100,           # allow up to 100 concurrent requests
+    )
+    timeout = httpx.Timeout(
+        timeout=60.0,  # overall operation deadline
+        connect=5.0,   # max 5s to establish TCP/TLS connection
+    )
+    app.state.http_client = httpx.AsyncClient(limits=limits, timeout=timeout)
+
     yield
-    # Shutdown logic (if any needed in future)
+
+    # Shutdown: gracefully close connection pool
+    if hasattr(app.state, "http_client") and app.state.http_client is not None:
+        await app.state.http_client.aclose()
 
 
 app = FastAPI(title="ModelMux", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
-# Dependency: returns the active provider.
+# Dependency: returns the shared AsyncClient from app.state
+# ---------------------------------------------------------------------------
+def get_http_client(request: Request) -> httpx.AsyncClient | None:
+    """Return the shared connection-pooled AsyncClient from app.state."""
+    return getattr(request.app.state, "http_client", None)
+
+
+# ---------------------------------------------------------------------------
+# Dependency: returns the active provider with the shared HTTP client.
 # Tests can swap this via app.dependency_overrides[get_provider] = ...
 # ---------------------------------------------------------------------------
-def get_provider() -> BaseProvider:
-    """Return the default provider for every request."""
-    return GroqProvider()
+def get_provider(
+    client: httpx.AsyncClient | None = Depends(get_http_client),
+) -> BaseProvider:
+    """Return the default provider injected with the shared HTTP client."""
+    return GroqProvider(client=client)
 
 
 # ---------------------------------------------------------------------------
