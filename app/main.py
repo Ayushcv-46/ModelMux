@@ -5,7 +5,7 @@ from fastapi.responses import JSONResponse
 import httpx
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import load_yaml_config, settings
 from app.db import RequestLog, get_db, init_db
 from app.errors import ProviderError
 from app.providers.base import BaseProvider
@@ -14,7 +14,12 @@ from app.providers.groq import GroqProvider
 from app.providers.mock import MockProvider
 from app.providers.ollama import OllamaProvider
 from app.routing.router import Router
-from app.routing.strategy import PriorityStrategy
+from app.routing.strategy import (
+    ExplicitStrategy,
+    PriorityStrategy,
+    RoundRobinStrategy,
+    RoutingStrategy,
+)
 from app.schemas import ChatRequest, ChatResponse
 
 
@@ -58,13 +63,32 @@ def get_http_client(request: Request) -> httpx.AsyncClient | None:
 def get_router(
     client: httpx.AsyncClient | None = Depends(get_http_client),
 ) -> Router:
-    """Instantiate providers and return Router configured with PriorityStrategy."""
+    """
+    Instantiate providers and return Router configured with the strategy
+    specified in config.yaml (PriorityStrategy, RoundRobinStrategy, or ExplicitStrategy).
+    """
     providers: dict[str, BaseProvider] = {
         "groq": GroqProvider(client=client),
         "gemini": GeminiProvider(client=client),
         "ollama": OllamaProvider(client=client),
+        "mock": MockProvider(),
     }
-    strategy = PriorityStrategy(priority=settings.priority_list)
+
+    cfg = load_yaml_config()
+    strategy_name = cfg.routing.strategy.lower()
+
+    if strategy_name == "round_robin":
+        strategy = RoundRobinStrategy(provider_order=cfg.routing.priority)
+    elif strategy_name == "explicit":
+        fallback_strategy = PriorityStrategy(priority=cfg.routing.priority)
+        strategy = ExplicitStrategy(
+            model_to_provider=cfg.model_to_provider,
+            default_strategy=fallback_strategy,
+        )
+    else:
+        # Default: PriorityStrategy
+        strategy = PriorityStrategy(priority=cfg.routing.priority)
+
     return Router(providers=providers, strategy=strategy)
 
 
@@ -73,10 +97,14 @@ def get_router(
 # Tests can swap this via app.dependency_overrides[get_provider] = ...
 # ---------------------------------------------------------------------------
 def get_provider(
-    router: Router = Depends(get_router),
+    request: ChatRequest | None = None,
+    client: httpx.AsyncClient | None = Depends(get_http_client),
+    router: Router | None = Depends(get_router),
 ) -> BaseProvider:
-    """Return the top-priority provider determined by the router."""
-    return router.get_primary_provider()
+    """Return the top-priority provider determined by the router and request."""
+    if router is None:
+        router = get_router(client=client)
+    return router.get_primary_provider(request=request)
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+from pydantic import BaseModel, Field
+import yaml
 
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -44,3 +46,50 @@ except ImportError:
             return [p.strip().lower() for p in self.routing_priority.split(",") if p.strip()]
 
     settings = Settings()
+
+
+# ============================================================================
+# YAML Configuration Models (Day 19: Config-driven design)
+# ============================================================================
+
+class RoutingConfig(BaseModel):
+    strategy: str = "priority"
+    priority: list[str] = Field(default_factory=lambda: ["groq", "gemini", "ollama"])
+
+
+class ProviderConfig(BaseModel):
+    models: list[str] = Field(default_factory=list)
+
+
+class AppConfig(BaseModel):
+    routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    providers: dict[str, ProviderConfig] = Field(default_factory=dict)
+
+    @property
+    def model_to_provider(self) -> dict[str, str]:
+        """
+        Builds a reverse lookup mapping from lowercase model name -> lowercase provider name.
+        e.g., {"llama-3.3-70b-versatile": "groq", "gemini-1.5-flash": "gemini"}
+        """
+        mapping: dict[str, str] = {}
+        for provider_name, prov_cfg in self.providers.items():
+            for model in prov_cfg.models:
+                mapping[model.lower()] = provider_name.lower()
+        return mapping
+
+
+def load_yaml_config(config_path: str | Path = "config.yaml") -> AppConfig:
+    """Read and validate config.yaml. Falls back to default AppConfig if file is missing."""
+    p = Path(config_path)
+    if not p.is_file():
+        return AppConfig()
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return AppConfig(**data)
+    except Exception:
+        return AppConfig()
+
+
+# Global config instance loaded at startup
+yaml_config = load_yaml_config()

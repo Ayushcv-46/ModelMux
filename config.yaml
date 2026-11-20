@@ -1,0 +1,21 @@
+routing:
+  strategy: priority  # options: priority, round_robin, explicit
+  priority:
+    - groq
+    - gemini
+    - ollama
+
+providers:
+  groq:
+    models:
+      - openai/gpt-oss-20b
+      - openai/gpt-oss-120b
+  gemini:
+    models:
+      - gemini-3.5-flash-lite
+  ollama:
+    models:
+      - qwen2.5:3b
+  mock:
+    models:
+      - mock-1
