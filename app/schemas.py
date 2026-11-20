@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -22,3 +23,18 @@ class ChatResponse(BaseModel):
     tokens_in: int = Field(ge=0)
     tokens_out: int = Field(ge=0)
     latency_ms: float = Field(ge=0)
+
+
+class RequestLogResponse(BaseModel):
+    id: int
+    request_id: str | None = None
+    created_at: datetime
+    provider: str
+    model: str
+    status: str
+    latency_ms: int
+    tokens_in: int
+    tokens_out: int
+    routing_decision: str | None = None
+
+    model_config = {"from_attributes": True}

@@ -1,6 +1,8 @@
+from typing import Annotated
 import time
+import uuid
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Query, Request
 from fastapi.responses import JSONResponse
 import httpx
 from sqlalchemy.orm import Session
@@ -20,7 +22,7 @@ from app.routing.strategy import (
     RoundRobinStrategy,
     RoutingStrategy,
 )
-from app.schemas import ChatRequest, ChatResponse
+from app.schemas import ChatRequest, ChatResponse, RequestLogResponse
 
 
 @asynccontextmanager
@@ -135,7 +137,9 @@ async def health() -> dict[str, str]:
 @app.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
+    req: Request = None,
     provider: BaseProvider = Depends(get_provider),
+    router: Router = Depends(get_router),
     db: Session = Depends(get_db),
 ) -> ChatResponse:
     """
@@ -145,6 +149,16 @@ async def chat(
     """
     start_time = time.perf_counter()
     model_name = request.model or getattr(provider, "name", "unknown")
+    request_id = (
+        req.headers.get("x-request-id")
+        if req and hasattr(req, "headers") and req.headers.get("x-request-id")
+        else f"req_{uuid.uuid4().hex[:12]}"
+    )
+    routing_decision = (
+        getattr(router.strategy, "name", router.strategy.__class__.__name__)
+        if router and hasattr(router, "strategy")
+        else "Direct"
+    )
 
     try:
         response = await provider.complete(request)
@@ -152,12 +166,14 @@ async def chat(
 
         # Log successful completion
         log_entry = RequestLog(
+            request_id=request_id,
             provider=response.provider,
             model=response.model,
             status="success",
             latency_ms=latency_ms,
             tokens_in=response.tokens_in,
             tokens_out=response.tokens_out,
+            routing_decision=routing_decision,
         )
         db.add(log_entry)
         db.commit()
@@ -172,15 +188,39 @@ async def chat(
 
         # Log failure with error type (ensure provider is never None)
         log_entry = RequestLog(
+            request_id=request_id,
             provider=exc.provider or getattr(provider, "name", "unknown"),
             model=model_name,
             status=type(exc).__name__,
             latency_ms=latency_ms,
             tokens_in=tokens_in,
             tokens_out=0,
+            routing_decision=routing_decision,
         )
         db.add(log_entry)
         db.commit()
 
         # Re-raise so provider_error_handler returns the proper HTTP error response
         raise exc
+
+
+@app.get("/v1/requests", response_model=list[RequestLogResponse])
+@app.get("/requests", response_model=list[RequestLogResponse])
+def get_requests(
+    provider: Annotated[str | None, Query(description="Filter by provider name (e.g. 'groq')")] = None,
+    status: Annotated[str | None, Query(description="Filter by status (e.g. 'success', 'ProviderTimeout')")] = None,
+    limit: Annotated[int, Query(ge=1, le=100, description="Max logs to return (1-100)")] = 50,
+    offset: Annotated[int, Query(ge=0, description="Number of logs to skip")] = 0,
+    db: Session = Depends(get_db),
+) -> list[RequestLog]:
+    """
+    Retrieve request history with filtering by provider/status and pagination (limit/offset).
+    Returns newest logs first.
+    """
+    query = db.query(RequestLog)
+    if provider is not None and isinstance(provider, str) and provider.strip():
+        query = query.filter(RequestLog.provider.ilike(provider.strip()))
+    if status is not None and isinstance(status, str) and status.strip():
+        query = query.filter(RequestLog.status.ilike(status.strip()))
+
+    return query.order_by(RequestLog.id.desc()).offset(offset).limit(limit).all()
