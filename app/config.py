@@ -58,12 +58,20 @@ class RoutingConfig(BaseModel):
 
 
 class ProviderConfig(BaseModel):
+    timeout_seconds: float = 30.0
     models: list[str] = Field(default_factory=list)
 
 
 class AppConfig(BaseModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
+
+    def get_provider_timeout(self, provider_name: str, default: float = 30.0) -> float:
+        """Return configured timeout_seconds for a given provider, or default if not set."""
+        prov_cfg = self.providers.get(provider_name.lower())
+        if prov_cfg and prov_cfg.timeout_seconds > 0:
+            return prov_cfg.timeout_seconds
+        return default
 
     @property
     def model_to_provider(self) -> dict[str, str]:

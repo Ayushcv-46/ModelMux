@@ -15,6 +15,7 @@ from app.providers.gemini import GeminiProvider
 from app.providers.groq import GroqProvider
 from app.providers.mock import MockProvider
 from app.providers.ollama import OllamaProvider
+from app.reliability.timeout import execute_with_timeout
 from app.routing.router import Router
 from app.routing.strategy import (
     ExplicitStrategy,
@@ -160,8 +161,12 @@ async def chat(
         else "Direct"
     )
 
+    cfg = load_yaml_config()
+    provider_name = getattr(provider, "name", "unknown")
+    timeout_seconds = cfg.get_provider_timeout(provider_name, default=30.0)
+
     try:
-        response = await provider.complete(request)
+        response = await execute_with_timeout(provider, request, timeout_seconds)
         latency_ms = int((time.perf_counter() - start_time) * 1000)
 
         # Log successful completion

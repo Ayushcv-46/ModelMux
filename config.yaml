@@ -7,15 +7,19 @@ routing:
 
 providers:
   groq:
+    timeout_seconds: 30.0
     models:
       - openai/gpt-oss-20b
       - openai/gpt-oss-120b
   gemini:
+    timeout_seconds: 30.0
     models:
       - gemini-3.5-flash-lite
   ollama:
+    timeout_seconds: 60.0
     models:
       - qwen2.5:3b
   mock:
+    timeout_seconds: 5.0
     models:
       - mock-1
