@@ -64,7 +64,7 @@ def test_retry_succeeds_on_third_attempt():
     )
 
     async def run():
-        response = await retry(mock.call, attempts=3)
+        response = await retry(mock.call, attempts=3, base_delay=0.0)
         assert response.text == "Success on try 3"
         assert mock.call_count == 3
 
@@ -121,7 +121,7 @@ def test_retry_exhaustion_raises_final_error():
 
     async def run():
         with pytest.raises(ProviderError) as exc_info:
-            await retry(mock.call, attempts=3)
+            await retry(mock.call, attempts=3, base_delay=0.0)
 
         assert "Server error 3" in str(exc_info.value)
         assert mock.call_count == 3
