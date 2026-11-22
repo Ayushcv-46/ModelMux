@@ -68,6 +68,21 @@ class ProviderBadRequest(ProviderError):
     status_code: int = 400
 
 
+class AllProvidersFailed(ProviderError):
+    """All candidate providers in the fallback chain failed to satisfy the request."""
+
+    status_code: int = 503
+
+    def __init__(
+        self,
+        message: str = "All candidate providers failed to fulfill the request",
+        provider: str = "router",
+        details: list[dict] | None = None,
+    ):
+        super().__init__(message, provider=provider, status_code=503)
+        self.details = details or []
+
+
 def is_retryable(error: Exception) -> bool:
     """
     Decides whether an error is transient (worth retrying) or permanent (fail immediately).

@@ -15,7 +15,7 @@ from app.providers.gemini import GeminiProvider
 from app.providers.groq import GroqProvider
 from app.providers.mock import MockProvider
 from app.providers.ollama import OllamaProvider
-from app.reliability import execute_with_timeout, retry
+from app.reliability import execute_fallback_chain, execute_with_timeout, retry
 from app.routing.router import Router
 from app.routing.strategy import (
     ExplicitStrategy,
@@ -162,17 +162,18 @@ async def chat(
     )
 
     cfg = load_yaml_config()
-    provider_name = getattr(provider, "name", "unknown")
-    timeout_seconds = cfg.get_provider_timeout(provider_name, default=30.0)
-    rel_cfg = cfg.reliability
+    if get_provider in app.dependency_overrides:
+        candidate_providers = [provider]
+    elif router:
+        candidate_providers = router.get_providers(request=request)
+    else:
+        candidate_providers = [provider]
 
     try:
-        response = await retry(
-            lambda: execute_with_timeout(provider, request, timeout_seconds),
-            attempts=rel_cfg.max_attempts,
-            base_delay=rel_cfg.base_delay,
-            max_delay=rel_cfg.max_delay,
-            total_timeout_seconds=rel_cfg.total_timeout_seconds,
+        response = await execute_fallback_chain(
+            providers=candidate_providers,
+            request=request,
+            cfg=cfg,
         )
         latency_ms = int((time.perf_counter() - start_time) * 1000)
 
