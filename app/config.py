@@ -57,6 +57,13 @@ class RoutingConfig(BaseModel):
     priority: list[str] = Field(default_factory=lambda: ["groq", "gemini", "ollama"])
 
 
+class ReliabilityConfig(BaseModel):
+    total_timeout_seconds: float = 30.0
+    max_attempts: int = 3
+    base_delay: float = 0.5
+    max_delay: float = 10.0
+
+
 class ProviderConfig(BaseModel):
     timeout_seconds: float = 30.0
     models: list[str] = Field(default_factory=list)
@@ -64,6 +71,7 @@ class ProviderConfig(BaseModel):
 
 class AppConfig(BaseModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
 
     def get_provider_timeout(self, provider_name: str, default: float = 30.0) -> float:
