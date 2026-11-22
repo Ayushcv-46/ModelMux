@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +25,15 @@ class ChatResponse(BaseModel):
     latency_ms: float = Field(ge=0)
 
 
+class AttemptLog(BaseModel):
+    attempt: int
+    provider: str
+    status: int | str
+    duration_ms: float | int
+    error: str | None = None
+    error_category: str | None = None
+
+
 class RequestLogResponse(BaseModel):
     id: int
     request_id: str | None = None
@@ -36,5 +45,6 @@ class RequestLogResponse(BaseModel):
     tokens_in: int
     tokens_out: int
     routing_decision: str | None = None
+    attempts: list[dict[str, Any]] | None = None
 
     model_config = {"from_attributes": True}

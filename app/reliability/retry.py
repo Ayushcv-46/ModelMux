@@ -68,10 +68,12 @@ async def retry(
     sleep_fn: Callable[[float], Awaitable[Any]] | None = None,
     rng: random.Random | None = None,
     clock_fn: Callable[[], float] = time.perf_counter,
+    on_attempt: Callable[..., Any] | None = None,
 ) -> T:
     """
     Execute an async zero-argument callable `fn` up to `attempts` times with
-    exponential backoff, randomized jitter, and total time budget enforcement.
+    exponential backoff, randomized jitter, total time budget enforcement,
+    and granular attempt recording via on_attempt callback.
 
     Guarantees:
     - Retries only transient / retryable errors (as classified by is_retryable).
@@ -80,6 +82,7 @@ async def retry(
     - Total wall-clock time is bounded by total_timeout_seconds.
     - Attempts and backoff sleeps stop immediately when budget is exhausted.
     - Sleep function and clock function are injectable for fast, deterministic unit testing.
+    - Invokes on_attempt(status=..., duration_ms=..., error=...) after each attempt.
     """
     if attempts < 1:
         raise ValueError("attempts must be at least 1")
@@ -104,6 +107,7 @@ async def retry(
                     provider="router",
                 )
 
+        attempt_start = clock_fn()
         try:
             # 2. Enforce one deadline: bind this attempt by the remaining budget
             if total_timeout_seconds is not None:
@@ -112,11 +116,18 @@ async def retry(
                 if remaining <= 0:
                     raise TimeoutError(f"Budget of {total_timeout_seconds:.2f}s exhausted")
                 async with asyncio.timeout(remaining):
-                    return await fn()
+                    result = await fn()
             else:
-                return await fn()
+                result = await fn()
+
+            duration_ms = int(round((clock_fn() - attempt_start) * 1000))
+            if on_attempt is not None:
+                on_attempt(status=200, duration_ms=duration_ms, error=None)
+            return result
 
         except Exception as err:
+            duration_ms = int(round((clock_fn() - attempt_start) * 1000))
+
             # If the budget timeout was triggered, wrap as ProviderTimeout
             if isinstance(err, TimeoutError) and total_timeout_seconds is not None:
                 elapsed = clock_fn() - start_time
@@ -124,6 +135,10 @@ async def retry(
                     f"Total request budget of {total_timeout_seconds:.2f}s exceeded after {elapsed:.2f}s.",
                     provider="router",
                 )
+
+            status_code = getattr(err, "status_code", 500)
+            if on_attempt is not None:
+                on_attempt(status=status_code, duration_ms=duration_ms, error=err)
 
             last_error = err
 

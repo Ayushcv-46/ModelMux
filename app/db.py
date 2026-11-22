@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Generator
-from sqlalchemy import DateTime, Integer, String, create_engine, inspect, text
+from sqlalchemy import JSON, DateTime, Integer, String, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, Session
 
 DATABASE_URL = "sqlite:///./modelmux.db"
@@ -32,6 +32,7 @@ class RequestLog(Base):
     tokens_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     routing_decision: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    attempts: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True, default=list)
 
 
 def init_db(target_engine=None) -> None:
@@ -47,6 +48,8 @@ def init_db(target_engine=None) -> None:
                 conn.execute(text("ALTER TABLE requests ADD COLUMN request_id VARCHAR(50)"))
             if "routing_decision" not in columns:
                 conn.execute(text("ALTER TABLE requests ADD COLUMN routing_decision VARCHAR(50)"))
+            if "attempts" not in columns:
+                conn.execute(text("ALTER TABLE requests ADD COLUMN attempts JSON"))
             conn.commit()
 
 
@@ -57,3 +60,7 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+# Ensure default database schema and column migrations are applied on import
+init_db()

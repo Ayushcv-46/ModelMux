@@ -169,11 +169,13 @@ async def chat(
     else:
         candidate_providers = [provider]
 
+    attempts_log: list[dict] = []
     try:
         response = await execute_fallback_chain(
             providers=candidate_providers,
             request=request,
             cfg=cfg,
+            attempts_log=attempts_log,
         )
         latency_ms = int((time.perf_counter() - start_time) * 1000)
 
@@ -187,6 +189,7 @@ async def chat(
             tokens_in=response.tokens_in,
             tokens_out=response.tokens_out,
             routing_decision=routing_decision,
+            attempts=attempts_log,
         )
         db.add(log_entry)
         db.commit()
@@ -209,6 +212,7 @@ async def chat(
             tokens_in=tokens_in,
             tokens_out=0,
             routing_decision=routing_decision,
+            attempts=attempts_log,
         )
         db.add(log_entry)
         db.commit()
