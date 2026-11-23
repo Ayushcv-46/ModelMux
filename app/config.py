@@ -62,6 +62,8 @@ class ReliabilityConfig(BaseModel):
     max_attempts: int = 3
     base_delay: float = 0.5
     max_delay: float = 10.0
+    circuit_breaker_failure_threshold: int = 3
+    circuit_breaker_recovery_timeout: float = 30.0
 
 
 class ProviderConfig(BaseModel):

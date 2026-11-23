@@ -83,6 +83,19 @@ class AllProvidersFailed(ProviderError):
         self.details = details or []
 
 
+class CircuitBreakerOpen(ProviderError):
+    """Provider's circuit breaker is OPEN due to repeated failures."""
+
+    status_code: int = 503
+
+    def __init__(
+        self,
+        message: str = "Circuit breaker is OPEN for provider",
+        provider: str | None = None,
+    ):
+        super().__init__(message, provider=provider, status_code=503)
+
+
 def is_retryable(error: Exception) -> bool:
     """
     Decides whether an error is transient (worth retrying) or permanent (fail immediately).
