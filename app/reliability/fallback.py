@@ -11,8 +11,9 @@ import time
 from typing import Any, Awaitable, Callable
 
 from app.config import AppConfig, load_yaml_config
-from app.errors import AllProvidersFailed
+from app.errors import AllProvidersFailed, CircuitBreakerOpen
 from app.providers.base import BaseProvider
+from app.reliability.circuit_breaker import CircuitBreaker, get_circuit_breaker
 from app.reliability.retry import retry
 from app.reliability.sanitizer import sanitize_error
 from app.reliability.timeout import execute_with_timeout
@@ -28,6 +29,7 @@ async def execute_fallback_chain(
     sleep_fn: Callable[[float], Awaitable[Any]] | None = None,
     clock_fn: Callable[[], float] = time.perf_counter,
     attempts_log: list[dict] | None = None,
+    breakers: dict[str, CircuitBreaker] | None = None,
 ) -> ChatResponse:
     """
     Execute requests across candidate providers in priority order.
@@ -36,6 +38,9 @@ async def execute_fallback_chain(
     - Returns the first successful response.
     - If a provider fails after retries, logs the failure and falls back to the next provider.
     - Skips providers incompatible with request.model.
+    - Checks provider circuit breakers; skips providers whose circuit breaker is OPEN (0ms fast fail).
+    - If a provider call succeeds, records success with its circuit breaker.
+    - If a provider call fails, records failure with its circuit breaker.
     - All providers and retries share the single total_timeout_seconds budget.
     - If all candidate providers fail, raises AllProvidersFailed (HTTP 503).
     - Populates attempts_log with granular execution history (order, provider, status, duration, error).
@@ -76,7 +81,33 @@ async def execute_fallback_chain(
                 )
                 continue
 
-        # 3. Determine attempt timeout: bounded by remaining budget
+        # 3. Circuit Breaker Guard:
+        cb: CircuitBreaker | None = None
+        if breakers is not None:
+            cb = breakers.get(provider_name.lower()) or breakers.get(provider_name)
+        elif hasattr(provider, "circuit_breaker") and provider.circuit_breaker is not None:
+            cb = provider.circuit_breaker
+        else:
+            cb = get_circuit_breaker(
+                provider_name,
+                failure_threshold=rel_cfg.circuit_breaker_failure_threshold,
+                recovery_timeout=rel_cfg.circuit_breaker_recovery_timeout,
+                clock_fn=clock_fn,
+            )
+
+        if cb is not None:
+            cb.clock_fn = clock_fn
+            if not cb.allow():
+                logger.warning(
+                    f"Circuit breaker for provider '{provider_name}' is {cb.state.value.upper()}. Skipping."
+                )
+                errors.append({
+                    "provider": provider_name,
+                    "error": f"Circuit breaker is {cb.state.value}",
+                })
+                continue
+
+        # 4. Determine attempt timeout: bounded by remaining budget
         prov_timeout = config.get_provider_timeout(provider_name, default=30.0)
         effective_timeout = min(prov_timeout, remaining_budget)
 
@@ -107,11 +138,19 @@ async def execute_fallback_chain(
                 clock_fn=clock_fn,
                 on_attempt=make_record_attempt(provider_name),
             )
+            # Record success on circuit breaker
+            if cb is not None:
+                cb.record_success()
+
             # Return first success immediately
             logger.info(f"Provider '{provider_name}' succeeded. Returning response.")
             return response
 
         except Exception as err:
+            # Record qualifying failure on circuit breaker
+            if cb is not None:
+                cb.record_failure(err)
+
             logger.warning(
                 f"Provider '{provider_name}' failed after attempts: {err}. Falling back to next candidate..."
             )
@@ -121,6 +160,14 @@ async def execute_fallback_chain(
     # If only a single provider was attempted and failed, preserve its specific error (504, 429, etc.)
     if len(providers) == 1 and last_exception is not None:
         raise last_exception
+
+    # If only a single provider was configured and its circuit breaker was OPEN
+    if len(providers) == 1 and last_exception is None and errors:
+        first_prov_name = getattr(providers[0], "name", "unknown")
+        raise CircuitBreakerOpen(
+            message=f"Circuit breaker is OPEN for provider '{first_prov_name}'",
+            provider=first_prov_name,
+        )
 
     # If multiple providers were tried and all failed, return 503
     error_summary = "; ".join(f"[{e['provider']}] {e['error']}" for e in errors) if errors else "Budget exhausted"

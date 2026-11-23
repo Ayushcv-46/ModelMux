@@ -1,4 +1,10 @@
-from app.reliability.circuit_breaker import CircuitBreaker, CircuitState, counts_toward_breaker
+from app.reliability.circuit_breaker import (
+    CircuitBreaker,
+    CircuitState,
+    counts_toward_breaker,
+    get_circuit_breaker,
+    reset_circuit_breakers,
+)
 from app.reliability.fallback import execute_fallback_chain
 from app.reliability.retry import calculate_backoff, retry
 from app.reliability.sanitizer import sanitize_error, sanitize_error_message
@@ -11,6 +17,8 @@ __all__ = [
     "counts_toward_breaker",
     "execute_fallback_chain",
     "execute_with_timeout",
+    "get_circuit_breaker",
+    "reset_circuit_breakers",
     "retry",
     "sanitize_error",
     "sanitize_error_message",
