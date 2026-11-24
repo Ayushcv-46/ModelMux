@@ -37,6 +37,7 @@ class AttemptLog(BaseModel):
 class RequestLogResponse(BaseModel):
     id: int
     request_id: str | None = None
+    tenant_id: str | None = None
     created_at: datetime
     provider: str
     model: str
@@ -48,3 +49,35 @@ class RequestLogResponse(BaseModel):
     attempts: list[dict[str, Any]] | None = None
 
     model_config = {"from_attributes": True}
+
+
+# ============================================================================
+# Admin API Schemas (Day 32)
+# ============================================================================
+
+class CreateApiKeyRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    rate_limit: int = Field(default=60, ge=1)
+    tenant_id: str | None = Field(default=None, max_length=50)
+
+
+class CreateApiKeyResponse(BaseModel):
+    id: int
+    name: str
+    tenant_id: str
+    rate_limit: int
+    key: str  # Plaintext key returned ONCE
+    active: bool
+    created_at: datetime
+
+
+class RevokeApiKeyRequest(BaseModel):
+    key: str | None = None
+    key_id: int | None = None
+
+
+class RevokeApiKeyResponse(BaseModel):
+    status: str
+    message: str
+    key_id: int | None = None
+

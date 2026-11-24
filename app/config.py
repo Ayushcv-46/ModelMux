@@ -11,6 +11,7 @@ try:
         groq_api_key: str = ""
         ollama_base_url: str = "http://localhost:11434"
         routing_priority: str = "groq,gemini,ollama"
+        admin_secret: str = "modelmux-admin-secret-dev"
 
         model_config = SettingsConfigDict(
             env_file=".env",
@@ -40,6 +41,7 @@ except ImportError:
             self.groq_api_key: str = os.getenv("GROQ_API_KEY", "")
             self.ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
             self.routing_priority: str = os.getenv("ROUTING_PRIORITY", "groq,gemini,ollama")
+            self.admin_secret: str = os.getenv("ADMIN_SECRET", "modelmux-admin-secret-dev")
 
         @property
         def priority_list(self) -> list[str]:

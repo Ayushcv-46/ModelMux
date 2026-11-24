@@ -33,6 +33,7 @@ class RequestLog(Base):
     tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     routing_decision: Mapped[str | None] = mapped_column(String(50), nullable=True)
     attempts: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True, default=list)
+    tenant_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
 
 
 class ApiKey(Base):
@@ -73,6 +74,8 @@ def init_db(target_engine=None) -> None:
                 conn.execute(text("ALTER TABLE requests ADD COLUMN routing_decision VARCHAR(50)"))
             if "attempts" not in columns:
                 conn.execute(text("ALTER TABLE requests ADD COLUMN attempts JSON"))
+            if "tenant_id" not in columns:
+                conn.execute(text("ALTER TABLE requests ADD COLUMN tenant_id VARCHAR(50)"))
             conn.commit()
 
 

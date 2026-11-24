@@ -2,13 +2,20 @@ from typing import Annotated
 import time
 import uuid
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 import httpx
 from sqlalchemy.orm import Session
 
+from app.auth import (
+    create_api_key,
+    get_current_api_key,
+    get_optional_api_key,
+    hash_api_key,
+    verify_admin_secret,
+)
 from app.config import load_yaml_config, settings
-from app.db import RequestLog, get_db, init_db
+from app.db import ApiKey, RequestLog, get_db, init_db
 from app.errors import ProviderError
 from app.providers.base import BaseProvider
 from app.providers.gemini import GeminiProvider
@@ -23,7 +30,15 @@ from app.routing.strategy import (
     RoundRobinStrategy,
     RoutingStrategy,
 )
-from app.schemas import ChatRequest, ChatResponse, RequestLogResponse
+from app.schemas import (
+    ChatRequest,
+    ChatResponse,
+    CreateApiKeyRequest,
+    CreateApiKeyResponse,
+    RequestLogResponse,
+    RevokeApiKeyRequest,
+    RevokeApiKeyResponse,
+)
 
 
 @asynccontextmanager
@@ -135,10 +150,71 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# Admin Routes (Day 32)
+# ---------------------------------------------------------------------------
+@app.post("/admin/keys", response_model=CreateApiKeyResponse)
+def admin_create_key(
+    body: CreateApiKeyRequest,
+    admin: str = Depends(verify_admin_secret),
+    db: Session = Depends(get_db),
+) -> CreateApiKeyResponse:
+    """Create a new client API key. Protected by ADMIN_SECRET."""
+    record, plain_key = create_api_key(
+        db=db,
+        name=body.name,
+        rate_limit=body.rate_limit,
+        tenant_id=body.tenant_id,
+    )
+    return CreateApiKeyResponse(
+        id=record.id,
+        name=record.name,
+        tenant_id=record.tenant_id or record.name,
+        rate_limit=record.rate_limit,
+        key=plain_key,  # Returned ONCE
+        active=record.active,
+        created_at=record.created_at,
+    )
+
+
+@app.post("/admin/keys/revoke", response_model=RevokeApiKeyResponse)
+def admin_revoke_key(
+    body: RevokeApiKeyRequest,
+    admin: str = Depends(verify_admin_secret),
+    db: Session = Depends(get_db),
+) -> RevokeApiKeyResponse:
+    """Revoke an active API key by key_id or key string. Protected by ADMIN_SECRET."""
+    query = db.query(ApiKey)
+    if body.key_id is not None:
+        record = query.filter(ApiKey.id == body.key_id).first()
+    elif body.key is not None and body.key.strip():
+        kh = hash_api_key(body.key)
+        record = query.filter(ApiKey.key_hash == kh).first()
+    else:
+        raise HTTPException(status_code=400, detail="Must provide either 'key_id' or 'key' to revoke.")
+
+    if record is None:
+        raise HTTPException(status_code=404, detail="API key not found.")
+
+    record.active = False
+    db.commit()
+
+    return RevokeApiKeyResponse(
+        status="revoked",
+        message=f"API key '{record.name}' (id={record.id}) has been revoked.",
+        key_id=record.id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Core Chat Route (Day 8 / 32)
+# ---------------------------------------------------------------------------
+@app.post("/v1/chat", response_model=ChatResponse)
 @app.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
     req: Request = None,
+    api_key: ApiKey = Depends(get_current_api_key),
     provider: BaseProvider = Depends(get_provider),
     router: Router = Depends(get_router),
     db: Session = Depends(get_db),
@@ -147,6 +223,7 @@ async def chat(
     Accept a ChatRequest, forward it to the active provider selected by the router,
     log the outcome (success or failure) to the database,
     and return the ChatResponse.
+    Protected by API Key authentication dependency.
     """
     start_time = time.perf_counter()
     model_name = request.model or getattr(provider, "name", "unknown")
@@ -169,6 +246,7 @@ async def chat(
     else:
         candidate_providers = [provider]
 
+    tenant_id = api_key.tenant_id if isinstance(api_key, ApiKey) else "default"
     attempts_log: list[dict] = []
     try:
         response = await execute_fallback_chain(
@@ -182,6 +260,7 @@ async def chat(
         # Log successful completion
         log_entry = RequestLog(
             request_id=request_id,
+            tenant_id=tenant_id,
             provider=response.provider,
             model=response.model,
             status="success",
@@ -205,6 +284,7 @@ async def chat(
         # Log failure with error type (ensure provider is never None)
         log_entry = RequestLog(
             request_id=request_id,
+            tenant_id=tenant_id,
             provider=exc.provider or getattr(provider, "name", "unknown"),
             model=model_name,
             status=type(exc).__name__,
@@ -226,15 +306,25 @@ async def chat(
 def get_requests(
     provider: Annotated[str | None, Query(description="Filter by provider name (e.g. 'groq')")] = None,
     status: Annotated[str | None, Query(description="Filter by status (e.g. 'success', 'ProviderTimeout')")] = None,
+    tenant_id: Annotated[str | None, Query(description="Filter by tenant ID (admin only)")] = None,
     limit: Annotated[int, Query(ge=1, le=100, description="Max logs to return (1-100)")] = 50,
     offset: Annotated[int, Query(ge=0, description="Number of logs to skip")] = 0,
     db: Session = Depends(get_db),
+    api_key: ApiKey | None = Depends(get_optional_api_key),
 ) -> list[RequestLog]:
     """
-    Retrieve request history with filtering by provider/status and pagination (limit/offset).
-    Returns newest logs first.
+    Retrieve request history with filtering by provider/status/tenant and pagination (limit/offset).
+    Tenant Scoping: Non-admin tenant keys are strictly scoped to their own tenant_id.
     """
     query = db.query(RequestLog)
+
+    # Tenant scoping (Engineering refinement)
+    if isinstance(api_key, ApiKey):
+        scoped_tenant = api_key.tenant_id or api_key.name
+        query = query.filter(RequestLog.tenant_id == scoped_tenant)
+    elif tenant_id is not None and isinstance(tenant_id, str) and tenant_id.strip():
+        query = query.filter(RequestLog.tenant_id == tenant_id.strip())
+
     if provider is not None and isinstance(provider, str) and provider.strip():
         query = query.filter(RequestLog.provider.ilike(provider.strip()))
     if status is not None and isinstance(status, str) and status.strip():
