@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Generator
-from sqlalchemy import JSON, DateTime, Integer, String, create_engine, inspect, text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker, Session
 
 DATABASE_URL = "sqlite:///./modelmux.db"
@@ -33,6 +33,29 @@ class RequestLog(Base):
     tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     routing_decision: Mapped[str | None] = mapped_column(String(50), nullable=True)
     attempts: Mapped[list[dict] | None] = mapped_column(JSON, nullable=True, default=list)
+
+
+class ApiKey(Base):
+    """
+    API Keys for ModelMux clients (Day 31).
+
+    Stores ONLY the SHA-256 hash of the API key, never the plain key.
+    Includes tenant identification and per-key rate limits.
+    """
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    rate_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    tenant_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+        index=True,
+    )
 
 
 def init_db(target_engine=None) -> None:
