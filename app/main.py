@@ -1,11 +1,15 @@
 from typing import Annotated
+import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 import httpx
+import redis.asyncio as aioredis
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.auth import (
     create_api_key,
@@ -57,9 +61,33 @@ async def lifespan(app: FastAPI):
     )
     app.state.http_client = httpx.AsyncClient(limits=limits, timeout=timeout)
 
+    # Initialize Async Redis connection (Day 33)
+    cfg = load_yaml_config()
+    redis_url = getattr(settings, "redis_url", None) or cfg.redis.url
+    try:
+        redis_client = aioredis.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=cfg.redis.connect_timeout,
+        )
+        await redis_client.ping()
+        app.state.redis = redis_client
+        logger.info(f"Connected to Redis at {redis_url}")
+    except Exception as exc:
+        app.state.redis = None
+        logger.warning(
+            f"Could not connect to Redis at {redis_url}: {exc}. Running in degraded mode without Redis."
+        )
+
     yield
 
-    # Shutdown: gracefully close connection pool
+    # Shutdown: gracefully close Redis and HTTP client
+    if hasattr(app.state, "redis") and app.state.redis is not None:
+        try:
+            await app.state.redis.aclose()
+        except Exception:
+            pass
+
     if hasattr(app.state, "http_client") and app.state.http_client is not None:
         await app.state.http_client.aclose()
 
@@ -73,6 +101,11 @@ app = FastAPI(title="ModelMux", lifespan=lifespan)
 def get_http_client(request: Request) -> httpx.AsyncClient | None:
     """Return the shared connection-pooled AsyncClient from app.state."""
     return getattr(request.app.state, "http_client", None)
+
+
+def get_redis(request: Request) -> aioredis.Redis | None:
+    """Return the shared Async Redis client from app.state, or None if unavailable."""
+    return getattr(request.app.state, "redis", None)
 
 
 # ---------------------------------------------------------------------------
@@ -146,8 +179,17 @@ async def provider_error_handler(request: Request, exc: ProviderError):
 # Routes
 # ---------------------------------------------------------------------------
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok"}
+async def health(request: Request) -> dict[str, str]:
+    """Health check endpoint reporting application and Redis connection status."""
+    redis_client = getattr(request.app.state, "redis", None)
+    if redis_client is not None:
+        try:
+            pong = await redis_client.ping()
+            if pong:
+                return {"status": "ok", "redis": "up"}
+        except Exception:
+            return {"status": "degraded", "redis": "down"}
+    return {"status": "degraded", "redis": "down"}
 
 
 # ---------------------------------------------------------------------------

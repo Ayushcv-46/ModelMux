@@ -9,6 +9,9 @@ def test_health_returns_200():
     assert response.status_code == 200
 
 
-def test_health_returns_ok_body():
+def test_health_returns_status_and_redis_fields():
     response = client.get("/health")
-    assert response.json() == {"status": "ok"}
+    data = response.json()
+    assert "status" in data
+    assert "redis" in data
+    assert data["redis"] in ("up", "down")

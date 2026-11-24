@@ -12,6 +12,7 @@ try:
         ollama_base_url: str = "http://localhost:11434"
         routing_priority: str = "groq,gemini,ollama"
         admin_secret: str = "modelmux-admin-secret-dev"
+        redis_url: str = "redis://localhost:6379/0"
 
         model_config = SettingsConfigDict(
             env_file=".env",
@@ -42,6 +43,7 @@ except ImportError:
             self.ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
             self.routing_priority: str = os.getenv("ROUTING_PRIORITY", "groq,gemini,ollama")
             self.admin_secret: str = os.getenv("ADMIN_SECRET", "modelmux-admin-secret-dev")
+            self.redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
         @property
         def priority_list(self) -> list[str]:
@@ -73,9 +75,15 @@ class ProviderConfig(BaseModel):
     models: list[str] = Field(default_factory=list)
 
 
+class RedisConfig(BaseModel):
+    url: str = "redis://localhost:6379/0"
+    connect_timeout: float = 2.0
+
+
 class AppConfig(BaseModel):
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     reliability: ReliabilityConfig = Field(default_factory=ReliabilityConfig)
+    redis: RedisConfig = Field(default_factory=RedisConfig)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
 
     def get_provider_timeout(self, provider_name: str, default: float = 30.0) -> float:
