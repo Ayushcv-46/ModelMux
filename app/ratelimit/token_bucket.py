@@ -8,7 +8,8 @@ Supports:
 """
 
 import time
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable
 
 
 class TokenBucket:
@@ -64,3 +65,61 @@ class TokenBucket:
     def remaining(self) -> int:
         """Whole tokens currently available in the bucket."""
         return int(self.tokens)
+
+
+class RateLimiter:
+    """
+    Atomic Redis-backed Token Bucket rate limiter using a Lua script (Day 35).
+
+    Uses Redis `register_script` (EVALSHA) to execute read, refill, decrement,
+    and write in one atomic server-side step.
+    """
+
+    def __init__(
+        self,
+        redis_client: Any,
+        default_capacity: float = 60.0,
+        default_refill_rate: float = 1.0,
+        key_prefix: str = "ratelimit:",
+        lua_path: Path | None = None,
+    ) -> None:
+        self.redis = redis_client
+        self.default_capacity = float(default_capacity)
+        self.default_refill_rate = float(default_refill_rate)
+        self.key_prefix = key_prefix
+
+        script_path = lua_path or (Path(__file__).resolve().parent / "bucket.lua")
+        self.lua_script = script_path.read_text(encoding="utf-8")
+        self._script = self.redis.register_script(self.lua_script)
+        self.last_remaining: int = int(default_capacity)
+
+    async def check(
+        self,
+        key_id: str | int,
+        capacity: float | None = None,
+        refill_rate: float | None = None,
+        cost: float = 1.0,
+        now: float | None = None,
+    ) -> tuple[bool, float]:
+        """
+        Atomically check and consume `cost` tokens for `key_id` in Redis.
+
+        Returns:
+            (allowed, retry_after):
+            - allowed: True if request is permitted, False if rate-limited.
+            - retry_after: Seconds to wait before retrying (0.0 when allowed).
+        """
+        cap = float(capacity if capacity is not None else self.default_capacity)
+        rate = float(refill_rate if refill_rate is not None else self.default_refill_rate)
+        redis_key = f"{self.key_prefix}{key_id}"
+        now_arg = "" if now is None else str(now)
+
+        result = await self._script(
+            keys=[redis_key],
+            args=[str(cap), str(rate), str(cost), now_arg],
+        )
+
+        allowed = bool(int(result[0]))
+        retry_after = float(result[1])
+        self.last_remaining = int(float(result[2])) if len(result) > 2 else 0
+        return allowed, retry_after
