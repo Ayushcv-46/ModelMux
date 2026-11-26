@@ -123,3 +123,35 @@ class RateLimiter:
         retry_after = float(result[1])
         self.last_remaining = int(float(result[2])) if len(result) > 2 else 0
         return allowed, retry_after
+
+
+class InMemoryRateLimiter:
+    """
+    In-memory fallback rate limiter with the same interface as RateLimiter.
+    Used when Redis is unavailable (e.g. local dev/tests without Docker).
+    """
+
+    def __init__(self) -> None:
+        self._buckets: dict[str, TokenBucket] = {}
+        self.last_remaining: int = 0
+
+    async def check(
+        self,
+        key_id: str | int,
+        capacity: float = 60.0,
+        refill_rate: float = 1.0,
+        cost: float = 1.0,
+        now: float | None = None,
+    ) -> tuple[bool, float]:
+        key = str(key_id)
+        bucket = self._buckets.get(key)
+        if bucket is None or bucket.capacity != float(capacity) or bucket.refill_rate != float(refill_rate):
+            bucket = TokenBucket(capacity=capacity, refill_rate=refill_rate)
+            self._buckets[key] = bucket
+
+        allowed, retry_after = bucket.allow(now=now, cost=cost)
+        self.last_remaining = bucket.remaining
+        return allowed, retry_after
+
+    def clear(self) -> None:
+        self._buckets.clear()

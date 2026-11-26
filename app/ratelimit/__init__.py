@@ -1,3 +1,3 @@
-from app.ratelimit.token_bucket import RateLimiter, TokenBucket
+from app.ratelimit.token_bucket import InMemoryRateLimiter, RateLimiter, TokenBucket
 
-__all__ = ["RateLimiter", "TokenBucket"]
+__all__ = ["InMemoryRateLimiter", "RateLimiter", "TokenBucket"]

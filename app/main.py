@@ -1,9 +1,10 @@
 from typing import Annotated
 import logging
+import math
 import time
 import uuid
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 import httpx
 import redis.asyncio as aioredis
@@ -26,6 +27,7 @@ from app.providers.gemini import GeminiProvider
 from app.providers.groq import GroqProvider
 from app.providers.mock import MockProvider
 from app.providers.ollama import OllamaProvider
+from app.ratelimit import InMemoryRateLimiter, RateLimiter
 from app.reliability import execute_fallback_chain, execute_with_timeout, retry
 from app.routing.router import Router
 from app.routing.strategy import (
@@ -106,6 +108,25 @@ def get_http_client(request: Request) -> httpx.AsyncClient | None:
 def get_redis(request: Request) -> aioredis.Redis | None:
     """Return the shared Async Redis client from app.state, or None if unavailable."""
     return getattr(request.app.state, "redis", None)
+
+
+def get_rate_limiter(request: Request) -> RateLimiter | InMemoryRateLimiter:
+    """
+    Return a RateLimiter backed by Redis when connected, or an InMemoryRateLimiter fallback.
+    """
+    redis_client = getattr(request.app.state, "redis", None)
+    if redis_client is not None:
+        limiter = getattr(request.app.state, "redis_rate_limiter", None)
+        if limiter is None or limiter.redis is not redis_client:
+            limiter = RateLimiter(redis_client=redis_client)
+            request.app.state.redis_rate_limiter = limiter
+        return limiter
+
+    in_mem = getattr(request.app.state, "in_memory_limiter", None)
+    if in_mem is None:
+        in_mem = InMemoryRateLimiter()
+        request.app.state.in_memory_limiter = in_mem
+    return in_mem
 
 
 # ---------------------------------------------------------------------------
@@ -255,8 +276,10 @@ def admin_revoke_key(
 @app.post("/chat", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
+    response_obj: Response,
     req: Request = None,
     api_key: ApiKey = Depends(get_current_api_key),
+    limiter: RateLimiter | InMemoryRateLimiter = Depends(get_rate_limiter),
     provider: BaseProvider = Depends(get_provider),
     router: Router = Depends(get_router),
     db: Session = Depends(get_db),
@@ -265,8 +288,28 @@ async def chat(
     Accept a ChatRequest, forward it to the active provider selected by the router,
     log the outcome (success or failure) to the database,
     and return the ChatResponse.
-    Protected by API Key authentication dependency.
+    Protected by API Key authentication and per-key rate limiting.
     """
+    # Per-key rate limit check (runs immediately after Auth)
+    if isinstance(api_key, ApiKey):
+        limit_per_min = float(max(1, api_key.rate_limit))
+        allowed, retry_after = await limiter.check(
+            key_id=api_key.id,
+            capacity=limit_per_min,
+            refill_rate=limit_per_min / 60.0,
+        )
+        if not allowed:
+            retry_seconds = str(max(1, math.ceil(retry_after)))
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Rate limit exceeded. Too many requests.",
+                headers={
+                    "Retry-After": retry_seconds,
+                    "X-RateLimit-Remaining": "0",
+                },
+            )
+        response_obj.headers["X-RateLimit-Remaining"] = str(limiter.last_remaining)
+
     start_time = time.perf_counter()
     model_name = request.model or getattr(provider, "name", "unknown")
     request_id = (

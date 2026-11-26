@@ -12,10 +12,14 @@ from app.reliability.circuit_breaker import reset_circuit_breakers
 
 @pytest.fixture(autouse=True)
 def clean_circuit_breakers():
-    """Ensure clean circuit breaker state before and after each test."""
+    """Ensure clean circuit breaker and in-memory rate limiter state before and after each test."""
     reset_circuit_breakers()
+    if hasattr(app.state, "in_memory_limiter") and app.state.in_memory_limiter is not None:
+        app.state.in_memory_limiter.clear()
     yield
     reset_circuit_breakers()
+    if hasattr(app.state, "in_memory_limiter") and app.state.in_memory_limiter is not None:
+        app.state.in_memory_limiter.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -28,8 +32,8 @@ def legacy_tests_auth_override(request):
     node_name = request.node.name
     file_name = request.node.fspath.basename if hasattr(request.node, "fspath") else ""
 
-    # Do NOT override when running tests specifically designed to test authentication
-    if "test_auth" in file_name or "test_api_keys" in file_name or "auth" in node_name:
+    # Do NOT override when running tests specifically designed to test authentication or per-key rate limits
+    if "test_auth" in file_name or "test_api_keys" in file_name or "test_rate_limit_middleware" in file_name or "auth" in node_name:
         yield
         return
 
